@@ -2,7 +2,7 @@
 # 데이터 모델 클래스들 - utils에만 의존
 
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
 from typing import List, Dict, Optional, Any
@@ -21,7 +21,7 @@ class FileChangeType(Enum):
 @dataclass
 class FileStatus:
     """파일 상태 정보"""
-    path: str  # working/ 기준 상대경로
+    path: str
     name: str
     change_type: FileChangeType
     last_modified: datetime
@@ -32,37 +32,23 @@ class FileStatus:
     
     @property
     def display_name(self) -> str:
-        """UI 표시용 이름"""
         icons = {
-            FileChangeType.UNCHANGED: "✅",
-            FileChangeType.MODIFIED: "⚠️",
-            FileChangeType.ADDED: "🆕", 
+            FileChangeType.UNCHANGED: "📄",
+            FileChangeType.MODIFIED: "📝",
+            FileChangeType.ADDED: "✨", 
             FileChangeType.DELETED: "❌"
         }
-        
-        status_text = {
-            FileChangeType.UNCHANGED: "",
-            FileChangeType.MODIFIED: " (변경됨)",
-            FileChangeType.ADDED: " (새로 생김)",
-            FileChangeType.DELETED: " (삭제됨)"
-        }
-        
-        return f"{icons[self.change_type]} {self.name}{status_text[self.change_type]}"
+        return f"{icons.get(self.change_type, '❓')} {self.name}"
     
     @property
     def size_display(self) -> str:
-        """파일 크기 표시용"""
-        if self.file_size < 1024:
-            return f"{self.file_size} B"
-        elif self.file_size < 1024 * 1024:
-            return f"{self.file_size // 1024} KB"
-        else:
-            return f"{self.file_size // (1024 * 1024)} MB"
+        if self.file_size < 1024: return f"{self.file_size} B"
+        elif self.file_size < 1024 * 1024: return f"{self.file_size // 1024} KB"
+        else: return f"{self.file_size // (1024 * 1024)} MB"
     
     @classmethod
-    def create_from_file(cls, file_path: str, project_root: str, previous_hash: str = "") -> 'FileStatus':
-        """파일에서 FileStatus 객체 생성"""
-        rel_path = os.path.relpath(file_path, project_root)
+    def create_from_file(cls, file_path: str, base_path: str, previous_hash: str = "") -> 'FileStatus':
+        rel_path = os.path.relpath(file_path, base_path) if os.path.isabs(file_path) else file_path
         name = os.path.basename(file_path)
         
         if os.path.exists(file_path):
@@ -71,30 +57,19 @@ class FileStatus:
             file_size = FileUtils.get_file_size(file_path)
             is_text_file = FileUtils.is_text_file(file_path)
             
-            # 변경 타입 결정
-            if not previous_hash:
+            if not previous_hash and current_hash:
                 change_type = FileChangeType.ADDED
             elif current_hash != previous_hash:
                 change_type = FileChangeType.MODIFIED
             else:
                 change_type = FileChangeType.UNCHANGED
         else:
-            # 파일이 삭제됨
-            current_hash = ""
-            last_modified = datetime.min
-            file_size = 0
-            is_text_file = True
+            current_hash, last_modified, file_size, is_text_file = "", datetime.min, 0, True
             change_type = FileChangeType.DELETED
         
         return cls(
-            path=rel_path,
-            name=name,
-            change_type=change_type,
-            last_modified=last_modified,
-            current_hash=current_hash,
-            previous_hash=previous_hash,
-            file_size=file_size,
-            is_text_file=is_text_file
+            path=rel_path, name=name, change_type=change_type, last_modified=last_modified,
+            current_hash=current_hash, previous_hash=previous_hash, file_size=file_size, is_text_file=is_text_file
         )
 
 
@@ -104,35 +79,53 @@ class Version:
     number: int
     description: str
     created_at: datetime
-    files: List[str]  # 포함된 파일 목록 (상대경로)
+    files: List[str]
     
+    # --- NEW: 추가된 필드 ---
+    change_notes: str = ""  # 사용자가 직접 작성하는 변경 노트
+    auto_log: List[Dict[str, str]] = field(default_factory=list) # 자동 변경 로그
+
     @property
     def created_at_display(self) -> str:
-        """생성일시 표시용"""
         return self.created_at.strftime('%Y-%m-%d %H:%M')
     
     @property
     def description_short(self) -> str:
-        """짧은 설명 (UI용)"""
         return StringUtils.truncate_text(self.description, 50)
+
+    @property
+    def auto_log_summary(self) -> str:
+        """자동 로그 요약 (UI 표시용)"""
+        if not self.auto_log:
+            return ""
+        added = sum(1 for log in self.auto_log if log.get("type") == "added")
+        removed = sum(1 for log in self.auto_log if log.get("type") == "removed")
+        modified = sum(1 for log in self.auto_log if log.get("type") == "modified")
+        parts = []
+        if added > 0: parts.append(f"+{added}")
+        if removed > 0: parts.append(f"-{removed}")
+        if modified > 0: parts.append(f"~{modified}")
+        return f"({', '.join(parts)})" if parts else ""
     
     def to_dict(self) -> Dict[str, Any]:
-        """딕셔너리로 변환 (JSON 저장용)"""
         return {
             "number": self.number,
             "description": self.description,
             "created_at": self.created_at.isoformat(),
-            "files": self.files
+            "files": self.files,
+            "change_notes": self.change_notes,
+            "auto_log": self.auto_log
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Version':
-        """딕셔너리에서 버전 객체 생성"""
         return cls(
             number=data["number"],
             description=data["description"],
             created_at=datetime.fromisoformat(data["created_at"]),
-            files=data["files"]
+            files=data["files"],
+            change_notes=data.get("change_notes", ""), # 이전 버전 호환
+            auto_log=data.get("auto_log", [])       # 이전 버전 호환
         )
 
 

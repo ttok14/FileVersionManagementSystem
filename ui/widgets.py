@@ -127,22 +127,31 @@ class FileTreeWidget(QTreeWidget):
 class VersionHistoryWidget(QListWidget):
     """버전 히스토리 위젯 (오른쪽 패널)"""
     
-    version_double_clicked = Signal(int)  # 버전 번호
-    
+    version_double_clicked = Signal(int)
+    version_selection_changed = Signal(Version) # Version 객체를 전달하는 새 시그널
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(350)
         self.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.currentItemChanged.connect(self._on_current_item_changed) # 선택 변경 시그널
         
     def update_versions(self, versions: List[Version], current_version: int):
+        self.blockSignals(True) # 업데이트 중 신호 발생 방지
         self.clear()
         
+        selected_item = None
         for version in reversed(versions):
             item = QListWidgetItem()
             current_indicator = "📍 " if version.number == current_version else ""
-            text = f"{current_indicator}v{version.number} - {version.description_short}\n"
+            
+            # --- NEW: 자동 로그 요약 정보 표시 ---
+            log_summary = version.auto_log_summary
+            
+            text = f"{current_indicator}v{version.number} - {version.description_short} {log_summary}\n"
             text += f"📅 {version.created_at_display}\n"
             text += f"📄 파일 {len(version.files)}개"
+            
             item.setText(text)
             item.setData(Qt.UserRole, version)
             
@@ -151,16 +160,27 @@ class VersionHistoryWidget(QListWidget):
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)
+                selected_item = item
             
-            tooltip_lines = [
-                f"버전: v{version.number}",
-                f"설명: {version.description}",
-                f"생성일: {version.created_at_display}",
-                f"포함된 파일: {len(version.files)}개"
-            ]
+            tooltip_lines = [f"버전: v{version.number}", f"설명: {version.description}", f"생성일: {version.created_at_display}", f"포함된 파일: {len(version.files)}개"]
             item.setToolTip("\n".join(tooltip_lines))
             self.addItem(item)
+            
+        if selected_item:
+            self.setCurrentItem(selected_item)
+            
+        self.blockSignals(False) # 신호 발생 재개
+        # 수동으로 첫 선택 아이템에 대한 신호 발생
+        if self.currentItem():
+            self._on_current_item_changed(self.currentItem(), None)
     
+    def _on_current_item_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
+        """선택된 아이템이 변경될 때 신호를 보냅니다."""
+        if current:
+            version = current.data(Qt.UserRole)
+            if version:
+                self.version_selection_changed.emit(version)
+                
     def _on_item_double_clicked(self, item: QListWidgetItem):
         version = item.data(Qt.UserRole)
         if version:

@@ -140,13 +140,38 @@ class Project:
         all_statuses = self.get_file_statuses()
         return [s for s in all_statuses if s.change_type != FileChangeType.UNCHANGED]
 
-    def save_to_current_version(self) -> bool:
+    
+    def save_to_current_version(self, modified_statuses: List[FileStatus]) -> bool:
+        """현재 버전에 변경사항을 저장하고, 자동 로그를 기록하며 해시를 갱신합니다."""
         if self.current_version == 0:
             raise Exception("Cannot save to version 0. Please create a new version.")
+        
         current_version_obj = self.data.get_version_by_number(self.current_version)
         if not current_version_obj: return False
+
+        # --- NEW: UI에서 전달받은 FileStatus를 기반으로 자동 로그 기록 ---
+        new_log_entries = []
+        for status in modified_statuses:
+            # FileChangeType Enum의 값을 문자열로 변환
+            log_type = status.change_type.value
+            new_log_entries.append({"type": log_type, "path": status.path})
+        
+        if new_log_entries:
+            current_version_obj.auto_log.extend(new_log_entries)
+
+        # 현재 버전에서 추적하는 모든 파일에 대해 해시 업데이트
         self.update_file_hashes(current_version_obj.files)
         current_version_obj.created_at = datetime.now()
+        self.save_config()
+        return True
+
+    def update_version_notes(self, version_number: int, notes: str) -> bool:
+        """특정 버전의 사용자 노트를 업데이트합니다."""
+        version_to_update = self.data.get_version_by_number(version_number)
+        if not version_to_update:
+            return False
+        
+        version_to_update.change_notes = notes
         self.save_config()
         return True
 

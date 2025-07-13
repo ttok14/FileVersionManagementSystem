@@ -8,7 +8,8 @@ from typing import Optional, Dict, List
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QGroupBox, QMessageBox, QFileDialog, QMenuBar,
-    QMenu, QStatusBar, QToolBar, QTabWidget, QPushButton, QLabel
+    QMenu, QStatusBar, QToolBar, QTabWidget, QPushButton, QLabel,
+    QTextEdit  # QTextEdit import 확인
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence, QIcon
@@ -34,11 +35,20 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.project_manager = ProjectManager()
         self.current_project: Optional[Project] = None
+
+        # UI 구성요소들
         self.file_tree: Optional[FileTreeWidget] = None
         self.version_history: Optional[VersionHistoryWidget] = None
         self.diff_viewer: Optional[DiffViewerWidget] = None
         self.project_info: Optional[ProjectInfoWidget] = None
         self.status_widget: Optional[StatusBarWidget] = None
+        
+        # BUG FIX: 새 UI 위젯 멤버 변수 초기화
+        self.version_note_tab: Optional[QWidget] = None
+        self.version_note_edit: Optional[QTextEdit] = None
+        self.save_note_btn: Optional[QPushButton] = None
+
+        # 다이얼로그들
         self.search_dialog: Optional[SearchDialog] = None
         self.compare_dialog: Optional[VersionCompareDialog] = None
         
@@ -99,12 +109,30 @@ class MainWindow(QMainWindow):
         tab_widget = QTabWidget()
         self.diff_viewer = DiffViewerWidget()
         tab_widget.addTab(self.diff_viewer, "🔍 변경사항")
+        self.version_note_tab = self.create_version_note_tab()
+        tab_widget.addTab(self.version_note_tab, "📝 버전 노트")
         self.project_info = ProjectInfoWidget()
         tab_widget.addTab(self.project_info, "📋 프로젝트 정보")
         layout.addWidget(tab_widget)
         return panel
 
+    def create_version_note_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        self.version_note_edit = QTextEdit()
+        self.version_note_edit.setPlaceholderText("선택된 버전에 대한 노트를 작성하세요...")
+        layout.addWidget(self.version_note_edit)
+        button_layout = QHBoxLayout()
+        self.save_note_btn = QPushButton("💾 노트 저장")
+        self.save_note_btn.setToolTip("현재 작성된 노트 내용을 이 버전에 저장합니다.")
+        button_layout.addStretch()
+        button_layout.addWidget(self.save_note_btn)
+        layout.addLayout(button_layout)
+        self.save_note_btn.clicked.connect(self.save_current_note)
+        return widget
+
     def create_version_panel(self) -> QWidget:
+        # BUG FIX: super() 호출 대신 기존 방식대로 직접 UI를 구성합니다.
         panel = QGroupBox("📚 버전 히스토리")
         layout = QVBoxLayout(panel)
         self.version_history = VersionHistoryWidget()
@@ -117,14 +145,14 @@ class MainWindow(QMainWindow):
         version_buttons.addStretch()
         layout.addLayout(version_buttons)
         self.version_history.version_double_clicked.connect(self.on_version_double_clicked)
-        self.version_history.itemSelectionChanged.connect(self.on_version_selection_changed)
+        # 시그널 이름을 정확히 맞춰줍니다.
+        self.version_history.version_selection_changed.connect(self.on_version_selection_changed)
         self.rollback_btn.clicked.connect(self.rollback_to_version)
         self.compare_btn.clicked.connect(self.show_version_compare_dialog)
         return panel
 
     def setup_menus(self):
         menubar = self.menuBar()
-        
         file_menu = menubar.addMenu("파일(&F)")
         self.new_project_action = QAction("새 프로젝트(&N)", self); self.new_project_action.setShortcut(QKeySequence.New); self.new_project_action.triggered.connect(self.create_new_project); file_menu.addAction(self.new_project_action)
         self.open_project_action = QAction("프로젝트 열기(&O)", self); self.open_project_action.setShortcut(QKeySequence.Open); self.open_project_action.triggered.connect(self.open_project); file_menu.addAction(self.open_project_action)
@@ -132,27 +160,17 @@ class MainWindow(QMainWindow):
         self.save_action = QAction("저장(&S)", self); self.save_action.setShortcut(QKeySequence.Save); self.save_action.triggered.connect(self.save_changes); file_menu.addAction(self.save_action)
         file_menu.addSeparator()
         self.exit_action = QAction("종료(&X)", self); self.exit_action.setShortcut(QKeySequence.Quit); self.exit_action.triggered.connect(self.close); file_menu.addAction(self.exit_action)
-        
         edit_menu = menubar.addMenu("편집(&E)")
-        
-        # BUG FIX: 중복된 메뉴를 제거하고 '싱크' 하나로 통일합니다.
-        self.sync_action = QAction("싱크(&Y)", self)
-        self.sync_action.setShortcut(QKeySequence("F5"))
-        self.sync_action.triggered.connect(self.perform_sync)
-        edit_menu.addAction(self.sync_action)
-        
+        self.sync_action = QAction("싱크(&Y)", self); self.sync_action.setShortcut(QKeySequence("F5")); self.sync_action.triggered.connect(self.perform_sync); edit_menu.addAction(self.sync_action)
         edit_menu.addSeparator()
         self.search_action = QAction("검색(&F)", self); self.search_action.setShortcut(QKeySequence.Find); self.search_action.triggered.connect(self.show_search_dialog); edit_menu.addAction(self.search_action)
-        
         project_menu = menubar.addMenu("프로젝트(&P)")
         self.project_settings_action = QAction("프로젝트 설정(&S)", self); self.project_settings_action.triggered.connect(self.edit_project_settings); project_menu.addAction(self.project_settings_action)
         project_menu.addSeparator()
         self.add_files_action = QAction("파일 추가(&A)", self); self.add_files_action.triggered.connect(self.add_files_to_track); project_menu.addAction(self.add_files_action)
-        
         view_menu = menubar.addMenu("보기(&V)")
         self.show_diff_action = QAction("변경사항 보기(&D)", self); self.show_diff_action.triggered.connect(self.show_selected_file_diff); view_menu.addAction(self.show_diff_action)
         self.compare_versions_action = QAction("버전 비교(&C)", self); self.compare_versions_action.triggered.connect(self.show_version_compare_dialog); view_menu.addAction(self.compare_versions_action)
-        
         help_menu = menubar.addMenu("도움말(&H)")
         self.about_action = QAction("정보(&A)", self); self.about_action.triggered.connect(self.show_about); help_menu.addAction(self.about_action)
 
@@ -244,23 +262,31 @@ class MainWindow(QMainWindow):
         try:
             modified_files = self.current_project.get_modified_files()
             
+            # 변경사항이 없어도 새 버전은 만들 수 있도록 함
+            if not modified_files:
+                reply = QMessageBox.question(self, "확인", "변경된 파일이 없습니다.\n그래도 새 버전을 만드시겠습니까?", QMessageBox.Yes | QMessageBox.No)
+                if reply == QMessageBox.No:
+                    return
+
             next_version_num = self.current_project.latest_version_number + 1
-            dialog = SaveOptionsDialog(
-                modified_files,
-                self.current_project.current_version,
-                next_version_num,
-                self
-            )
+            dialog = SaveOptionsDialog(modified_files, self.current_project.current_version, next_version_num, self)
 
             if dialog.exec():
                 save_type, description = dialog.get_result()
                 if save_type == "current":
-                    if self.current_project.save_to_current_version():
-                        self.refresh_file_status() 
+                    if not modified_files:
+                        QMessageBox.information(self, "알림", "변경된 파일이 없어 현재 버전에 저장할 내용이 없습니다.")
+                        return
+
+                    # --- NEW: 자동 로그 기록을 위해 변경된 파일 목록 전달 ---
+                    if self.current_project.save_to_current_version(modified_files):
+                        self.refresh_all_ui() # 로그가 업데이트되었으므로 히스토리도 새로고침
                         QMessageBox.information(self, "성공", f"v{self.current_project.current_version}에 현재 상태가 저장되었습니다.")
                     else:
                         QMessageBox.warning(self, "경고", "현재 버전에 저장할 수 없습니다.")
+
                 elif save_type == "new":
+                    # 새 버전 생성 시에는 기존 로직 유지 (create_new_version이 내부적으로 처리)
                     new_version = self.current_project.create_new_version(description)
                     self.refresh_all_ui()
                     QMessageBox.information(self, "성공", f"v{new_version.number} 버전이 생성되었습니다.")
@@ -283,6 +309,27 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "경고", "버전 전환에 실패했습니다.")
             except Exception as e:
                 QMessageBox.critical(self, "오류", f"버전 전환 실패:\n{str(e)}")
+
+    def on_version_selection_changed(self, version: Version):
+        if version:
+            self.version_note_edit.setText(version.change_notes)
+        else:
+            self.version_note_edit.clear()
+
+    def save_current_note(self):
+        if not self.current_project: return
+        selected_version = self.version_history.get_selected_version()
+        if not selected_version:
+            QMessageBox.warning(self, "알림", "노트를 저장할 버전을 선택해주세요.")
+            return
+        notes_text = self.version_note_edit.toPlainText()
+        try:
+            if self.current_project.update_version_notes(selected_version.number, notes_text):
+                self.statusBar().showMessage(f"v{selected_version.number}의 노트가 저장되었습니다.", 2000)
+            else:
+                QMessageBox.warning(self, "오류", "노트 저장에 실패했습니다.")
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"노트 저장 중 예외 발생: {e}")
 
     def closeEvent(self, event):
         if self.current_project:
@@ -408,7 +455,12 @@ class MainWindow(QMainWindow):
 
     def on_file_double_clicked(self, file_path): self.show_selected_file_diff()
 
-    def on_file_selection_changed(self):
+    def on_file_selection_changed(self, version=None):
+        if isinstance(version, Version): # from version history
+            if version: self.version_note_edit.setText(version.change_notes)
+            else: self.version_note_edit.clear()
+            return
+            
         selected_status = self.file_tree.get_selected_file_status()
         if selected_status and self.current_project:
             try:
@@ -420,172 +472,42 @@ class MainWindow(QMainWindow):
             self.diff_viewer.clear_diff()
 
     def on_version_double_clicked(self, version_number): self.rollback_to_version()
-    def on_version_selection_changed(self): pass
     def show_about(self): QMessageBox.about(self, "정보", "심플 파일 버전 관리 v1.0\n\n간단하고 직관적인 파일 버전 관리 도구입니다.")
 
 def main():
-    """메인 함수"""
     app = QApplication(sys.argv)
-    
     app.setApplicationName("심플 파일 버전 관리")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("SimpleDev")
-    
-    # 스타일 설정
     app.setStyleSheet("""
-        QMainWindow {
-            background-color: #f5f5f5;
-        }
-        
-        QGroupBox {
-            font-weight: bold;
-            border: 2px solid #cccccc;
-            border-radius: 8px;
-            margin-top: 1ex;
-            padding-top: 10px;
-            background-color: white;
-        }
-        
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 15px;
-            padding: 0 8px 0 8px;
-            background-color: white;
-        }
-        
-        QTreeWidget, QListWidget {
-            border: 1px solid #dddddd;
-            border-radius: 6px;
-            background-color: white;
-            alternate-background-color: #f9f9f9;
-        }
-        
-        QListWidget::item {
-            padding: 10px;
-            border-bottom: 1px solid #eeeeee;
-            min-height: 20px;
-        }
-
-        /* BUG FIX: 스타일 우선순위 문제를 해결합니다. */
-
-        /* 1. 마우스를 올렸을 때의 기본 스타일 */
-        QTreeWidget::item:hover, QListWidget::item:hover {
-            background-color: #e3f2fd; /* 연한 하늘색 배경 */
-        }
-
-        /* 2. 선택했을 때의 스타일 (hover보다 아래에 정의하여 우선순위를 높임) */
-        QTreeWidget::item:selected, QListWidget::item:selected {
-            background-color: #0078d7; /* 진한 파란색 배경 */
-            color: white;              /* 흰색 글자 */
-        }
-        
-        /* 3. (선택사항) 선택된 상태에서 마우스를 올렸을 때의 미세한 변화 */
-        QTreeWidget::item:selected:hover, QListWidget::item:selected:hover {
-            background-color: #005a9e; /* 살짝 더 어두운 파란색 */
-        }
-
-        QTreeWidget::item {
-            padding: 8px;
-            min-height: 20px;
-        }
-        
-        QPushButton {
-            padding: 8px 16px;
-            border: 1px solid #cccccc;
-            border-radius: 6px;
-            background-color: #ffffff;
-            font-weight: normal;
-            min-height: 16px;
-        }
-        
-        QPushButton:hover {
-            background-color: #f0f0f0;
-            border-color: #999999;
-        }
-        
-        QPushButton:pressed {
-            background-color: #e0e0e0;
-        }
-        
-        QPushButton:disabled {
-            background-color: #f5f5f5;
-            color: #999999;
-            border-color: #dddddd;
-        }
-        
-        QTextEdit {
-            border: 1px solid #dddddd;
-            border-radius: 6px;
-            background-color: white;
-            font-family: 'Consolas', 'Monaco', monospace;
-        }
-        
-        QTabWidget::pane {
-            border: 1px solid #cccccc;
-            border-radius: 6px;
-            background-color: white;
-        }
-        
-        QTabBar::tab {
-            padding: 8px 16px;
-            margin-right: 2px;
-            background-color: #f0f0f0;
-            border: 1px solid #cccccc;
-            border-bottom: none;
-            border-top-left-radius: 6px;
-            border-top-right-radius: 6px;
-        }
-        
-        QTabBar::tab:selected {
-            background-color: white;
-            border-bottom: 1px solid white;
-        }
-        
-        QMenuBar {
-            background-color: #f8f8f8;
-            border-bottom: 1px solid #cccccc;
-        }
-        
-        QMenuBar::item {
-            padding: 6px 12px;
-            background-color: transparent;
-        }
-        
-        QMenuBar::item:selected {
-            background-color: #e0e0e0;
-            border-radius: 4px;
-        }
-        
-        QStatusBar {
-            background-color: #f8f8f8;
-            border-top: 1px solid #cccccc;
-        }
-        
-        QToolBar {
-            background-color: #f8f8f8;
-            border-bottom: 1px solid #cccccc;
-            spacing: 4px;
-            padding: 4px;
-        }
-        
-        QSplitter::handle {
-            background-color: #cccccc;
-            width: 2px;
-            height: 2px;
-        }
-        
-        QSplitter::handle:hover {
-            background-color: #2196F3;
-        }
+        QMainWindow { background-color: #f5f5f5; }
+        QGroupBox { font-weight: bold; border: 2px solid #cccccc; border-radius: 8px; margin-top: 1ex; padding-top: 10px; background-color: white; }
+        QGroupBox::title { subcontrol-origin: margin; left: 15px; padding: 0 8px 0 8px; background-color: white; }
+        QTreeWidget, QListWidget { border: 1px solid #dddddd; border-radius: 6px; background-color: white; alternate-background-color: #f9f9f9; }
+        QListWidget::item { padding: 10px; border-bottom: 1px solid #eeeeee; min-height: 20px; }
+        QTreeWidget::item:selected, QListWidget::item:selected { background-color: #0078d7; color: white; }
+        QTreeWidget::item:hover, QListWidget::item:hover { background-color: #e3f2fd; }
+        QTreeWidget::item:selected:hover, QListWidget::item:selected:hover { background-color: #005a9e; }
+        QTreeWidget::item { padding: 8px; min-height: 20px; }
+        QPushButton { padding: 8px 16px; border: 1px solid #cccccc; border-radius: 6px; background-color: #ffffff; font-weight: normal; min-height: 16px; }
+        QPushButton:hover { background-color: #f0f0f0; border-color: #999999; }
+        QPushButton:pressed { background-color: #e0e0e0; }
+        QPushButton:disabled { background-color: #f5f5f5; color: #999999; border-color: #dddddd; }
+        QTextEdit { border: 1px solid #dddddd; border-radius: 6px; background-color: white; font-family: 'Consolas', 'Monaco', monospace; }
+        QTabWidget::pane { border: 1px solid #cccccc; border-radius: 6px; background-color: white; }
+        QTabBar::tab { padding: 8px 16px; margin-right: 2px; background-color: #f0f0f0; border: 1px solid #cccccc; border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px; }
+        QTabBar::tab:selected { background-color: white; border-bottom: 1px solid white; }
+        QMenuBar { background-color: #f8f8f8; border-bottom: 1px solid #cccccc; }
+        QMenuBar::item { padding: 6px 12px; background-color: transparent; }
+        QMenuBar::item:selected { background-color: #e0e0e0; border-radius: 4px; }
+        QStatusBar { background-color: #f8f8f8; border-top: 1px solid #cccccc; }
+        QToolBar { background-color: #f8f8f8; border-bottom: 1px solid #cccccc; spacing: 4px; padding: 4px; }
+        QSplitter::handle { background-color: #cccccc; width: 2px; height: 2px; }
+        QSplitter::handle:hover { background-color: #2196F3; }
     """)
-    
-    # 메인 윈도우 생성 및 표시
     window = MainWindow()
     window.show()
-    
-    # 시작 메시지
     window.status_widget.update_status("새 프로젝트를 생성하거나 기존 프로젝트를 열어주세요")
-    
     sys.exit(app.exec())
 
 if __name__ == "__main__":
