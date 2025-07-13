@@ -90,11 +90,8 @@ class Project:
         else:
             source_dir = self.current_version_dir
             if source_dir and os.path.exists(source_dir):
-                # BUG FIX: 재귀 복사를 막기 위해 `ignore` 패턴 사용
                 ignore = shutil.ignore_patterns('versions', 'project.json')
                 shutil.copytree(source_dir, new_version_dir, dirs_exist_ok=True, ignore=ignore)
-                
-                # 복사 후 파일 목록 다시 스캔
                 for root, _, files in os.walk(new_version_dir):
                     for file in files:
                         full_path = os.path.join(root, file)
@@ -198,9 +195,17 @@ class Project:
     def apply_sync_changes(self, changes: Dict[str, List[str]]):
         added_files = changes.get("added", [])
         removed_files = changes.get("removed", [])
+
+        # BUG FIX: 삭제된 파일을 전체 추적 목록과 해시에서도 제거합니다.
         tracked_set = set(self.data.tracked_files)
         tracked_set.update(added_files)
+        tracked_set.difference_update(removed_files) # 삭제된 파일 제거
         self.data.tracked_files = sorted(list(tracked_set))
+        
+        # 삭제된 파일의 해시 정보도 제거
+        for removed_file in removed_files:
+            if removed_file in self.data.file_hashes:
+                del self.data.file_hashes[removed_file]
 
         if self.current_version > 0:
             current_version_obj = self.data.get_version_by_number(self.current_version)
@@ -209,8 +214,32 @@ class Project:
                 current_files_set.update(added_files)
                 current_files_set.difference_update(removed_files)
                 current_version_obj.files = sorted(list(current_files_set))
+        
         self.update_file_hashes(added_files)
         self.save_config()
+
+    def remove_tracked_file(self, relative_path: str) -> bool:
+        """추적 파일 제거 시, 모든 관련 기록에서 삭제합니다."""
+        # 1. 전체 추적 목록에서 제거
+        if relative_path in self.data.tracked_files:
+            self.data.tracked_files.remove(relative_path)
+
+        # 2. 모든 버전의 파일 목록에서 해당 파일 기록 제거
+        for version in self.data.versions:
+            if relative_path in version.files:
+                version.files.remove(relative_path)
+        
+        # 3. 해시 기록에서 제거
+        if relative_path in self.data.file_hashes:
+            del self.data.file_hashes[relative_path]
+
+        # 4. 현재 작업 폴더에서 실제 파일 삭제
+        file_to_delete = self.get_working_file_path(relative_path)
+        if os.path.exists(file_to_delete):
+            os.remove(file_to_delete)
+
+        self.save_config()
+        return True
 
     @classmethod
     def load_from_config(cls, config_path: str, path_manager: PathManager) -> 'Project':
@@ -244,20 +273,6 @@ class Project:
         target_version = self.data.get_version_by_number(version_number)
         if not target_version: return False
         self.data.current_version = version_number
-        self.save_config()
-        return True
-
-    def remove_tracked_file(self, relative_path: str) -> bool:
-        if relative_path in self.data.tracked_files:
-            self.data.tracked_files.remove(relative_path)
-        for version in self.data.versions:
-            if relative_path in version.files:
-                version.files.remove(relative_path)
-        if relative_path in self.data.file_hashes:
-            del self.data.file_hashes[relative_path]
-        file_to_delete = self.get_working_file_path(relative_path)
-        if os.path.exists(file_to_delete):
-            os.remove(file_to_delete)
         self.save_config()
         return True
 
