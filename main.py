@@ -417,31 +417,145 @@ def main():
     app.setApplicationName("심플 파일 버전 관리")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("SimpleDev")
+    
+    # 스타일 설정
     app.setStyleSheet("""
-        QMainWindow { background-color: #f5f5f5; }
-        QGroupBox { font-weight: bold; border: 2px solid #cccccc; border-radius: 8px; margin-top: 1ex; padding-top: 10px; background-color: white; }
-        QGroupBox::title { subcontrol-origin: margin; left: 15px; padding: 0 8px 0 8px; background-color: white; }
-        QTreeWidget, QListWidget { border: 1px solid #dddddd; border-radius: 6px; background-color: white; alternate-background-color: #f9f9f9; }
-        QListWidget::item { padding: 10px; border-bottom: 1px solid #eeeeee; min-height: 20px; }
-        QListWidget::item:selected, QTreeWidget::item:selected { background-color: #e3f2fd; }
-        QListWidget::item:hover, QTreeWidget::item:hover { background-color: #f0f8ff; }
-        QTreeWidget::item { padding: 8px; min-height: 20px; }
-        QPushButton { padding: 8px 16px; border: 1px solid #cccccc; border-radius: 6px; background-color: #ffffff; font-weight: normal; min-height: 16px; }
-        QPushButton:hover { background-color: #f0f0f0; border-color: #999999; }
-        QPushButton:pressed { background-color: #e0e0e0; }
-        QPushButton:disabled { background-color: #f5f5f5; color: #999999; border-color: #dddddd; }
-        QTextEdit { border: 1px solid #dddddd; border-radius: 6px; background-color: white; font-family: 'Consolas', 'Monaco', monospace; }
-        QTabWidget::pane { border: 1px solid #cccccc; border-radius: 6px; background-color: white; }
-        QTabBar::tab { padding: 8px 16px; margin-right: 2px; background-color: #f0f0f0; border: 1px solid #cccccc; border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px; }
-        QTabBar::tab:selected { background-color: white; border-bottom: 1px solid white; }
-        QMenuBar { background-color: #f8f8f8; border-bottom: 1px solid #cccccc; }
-        QMenuBar::item { padding: 6px 12px; background-color: transparent; }
-        QMenuBar::item:selected { background-color: #e0e0e0; border-radius: 4px; }
-        QStatusBar { background-color: #f8f8f8; border-top: 1px solid #cccccc; }
-        QToolBar { background-color: #f8f8f8; border-bottom: 1px solid #cccccc; spacing: 4px; padding: 4px; }
-        QSplitter::handle { background-color: #cccccc; width: 2px; height: 2px; }
-        QSplitter::handle:hover { background-color: #2196F3; }
+        QMainWindow {
+            background-color: #f5f5f5;
+        }
+        
+        QGroupBox {
+            font-weight: bold;
+            border: 2px solid #cccccc;
+            border-radius: 8px;
+            margin-top: 1ex;
+            padding-top: 10px;
+            background-color: white;
+        }
+        
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 15px;
+            padding: 0 8px 0 8px;
+            background-color: white;
+        }
+        
+        QTreeWidget, QListWidget {
+            border: 1px solid #dddddd;
+            border-radius: 6px;
+            background-color: white;
+            alternate-background-color: #f9f9f9;
+        }
+        
+        QListWidget::item {
+            padding: 10px;
+            border-bottom: 1px solid #eeeeee;
+            min-height: 20px;
+        }
+        
+        QTreeWidget::item, QListWidget::item:selected {
+            background-color: #e3f2fd;
+        }
+        
+        QTreeWidget::item:hover, QListWidget::item:hover {
+            background-color: #f0f8ff;
+        }
+
+        QTreeWidget::item {
+            padding: 8px;
+            min-height: 20px;
+        }
+        
+        QPushButton {
+            padding: 8px 16px;
+            border: 1px solid #cccccc;
+            border-radius: 6px;
+            background-color: #ffffff;
+            font-weight: normal;
+            min-height: 16px;
+        }
+        
+        QPushButton:hover {
+            background-color: #f0f0f0;
+            border-color: #999999;
+        }
+        
+        QPushButton:pressed {
+            background-color: #e0e0e0;
+        }
+        
+        QPushButton:disabled {
+            background-color: #f5f5f5;
+            color: #999999;
+            border-color: #dddddd;
+        }
+        
+        QTextEdit {
+            border: 1px solid #dddddd;
+            border-radius: 6px;
+            background-color: white;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        
+        QTabWidget::pane {
+            border: 1px solid #cccccc;
+            border-radius: 6px;
+            background-color: white;
+        }
+        
+        QTabBar::tab {
+            padding: 8px 16px;
+            margin-right: 2px;
+            background-color: #f0f0f0;
+            border: 1px solid #cccccc;
+            border-bottom: none;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+        }
+        
+        QTabBar::tab:selected {
+            background-color: white;
+            border-bottom: 1px solid white;
+        }
+        
+        QMenuBar {
+            background-color: #f8f8f8;
+            border-bottom: 1px solid #cccccc;
+        }
+        
+        QMenuBar::item {
+            padding: 6px 12px;
+            background-color: transparent;
+        }
+        
+        QMenuBar::item:selected {
+            background-color: #e0e0e0;
+            border-radius: 4px;
+        }
+        
+        QStatusBar {
+            background-color: #f8f8f8;
+            border-top: 1px solid #cccccc;
+        }
+        
+        QToolBar {
+            background-color: #f8f8f8;
+            border-bottom: 1px solid #cccccc;
+            spacing: 4px;
+            padding: 4px;
+        }
+        
+        QSplitter::handle {
+            background-color: #cccccc;
+            width: 2px;
+            height: 2px;
+        }
+        
+        QSplitter::handle:hover {
+            background-color: #2196F3;
+        }
     """)
+    
     window = MainWindow()
     window.show()
     window.status_widget.update_status("새 프로젝트를 생성하거나 기존 프로젝트를 열어주세요")

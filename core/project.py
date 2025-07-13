@@ -35,7 +35,6 @@ class Project:
 
     @property
     def latest_version_number(self) -> int:
-        """현재 프로젝트의 가장 마지막 버전 번호를 반환합니다."""
         latest_version = self.data.get_latest_version()
         return latest_version.number if latest_version else 0
 
@@ -76,7 +75,6 @@ class Project:
         if not is_valid: raise ValueError(error_msg)
 
         new_version_num = self.latest_version_number + 1
-        
         new_version_dir = os.path.join(self.versions_dir, f"v{new_version_num}")
         FileUtils.ensure_dir(new_version_dir)
         
@@ -92,7 +90,11 @@ class Project:
         else:
             source_dir = self.current_version_dir
             if source_dir and os.path.exists(source_dir):
-                shutil.copytree(source_dir, new_version_dir, dirs_exist_ok=True)
+                # BUG FIX: 재귀 복사를 막기 위해 `ignore` 패턴 사용
+                ignore = shutil.ignore_patterns('versions', 'project.json')
+                shutil.copytree(source_dir, new_version_dir, dirs_exist_ok=True, ignore=ignore)
+                
+                # 복사 후 파일 목록 다시 스캔
                 for root, _, files in os.walk(new_version_dir):
                     for file in files:
                         full_path = os.path.join(root, file)
@@ -117,12 +119,23 @@ class Project:
         current_version_obj = self.data.get_version_by_number(self.current_version)
         if not current_version_obj: return []
         
-        files_to_check = current_version_obj.files
-        
-        for rel_path in files_to_check:
+        files_in_metadata = set(current_version_obj.files)
+        files_on_disk = set()
+        if os.path.exists(self.current_version_dir):
+            for root, _, files in os.walk(self.current_version_dir):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, self.current_version_dir)
+                    files_on_disk.add(os.path.normpath(rel_path).replace('\\', '/'))
+
+        all_files_to_check = files_in_metadata | files_on_disk
+
+        for rel_path in all_files_to_check:
             working_file_path = self.get_working_file_path(rel_path)
-            previous_hash = self.data.get_file_hash(rel_path) 
+            previous_hash = self.data.get_file_hash(rel_path)
             status = FileStatus.create_from_file(working_file_path, self.current_version_dir, previous_hash)
+            if rel_path not in files_in_metadata and os.path.exists(working_file_path):
+                status.change_type = FileChangeType.ADDED
             statuses.append(status)
         return statuses
 
@@ -212,6 +225,7 @@ class Project:
     def add_tracked_files(self, file_paths: List[str]):
         if not self.current_version_dir:
             raise Exception("Cannot add files: No active version. Please create a version first.")
+        newly_added_files = []
         for file_path in file_paths:
             file_name = os.path.basename(file_path)
             dest_path = os.path.join(self.current_version_dir, file_name)
@@ -222,7 +236,8 @@ class Project:
             current_version_obj = self.data.get_version_by_number(self.current_version)
             if current_version_obj and file_name not in current_version_obj.files:
                 current_version_obj.files.append(file_name)
-        self.update_file_hashes([os.path.basename(p) for p in file_paths])
+                newly_added_files.append(file_name)
+        self.update_file_hashes(newly_added_files)
         self.save_config()
 
     def rollback_to_version(self, version_number: int) -> bool:
