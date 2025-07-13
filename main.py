@@ -262,10 +262,18 @@ class MainWindow(QMainWindow):
         try:
             modified_files = self.current_project.get_modified_files()
             
-            # 변경사항이 없어도 새 버전은 만들 수 있도록 함
+            # 변경사항이 없어도 새 버전을 만들 수 있도록 함
             if not modified_files:
                 reply = QMessageBox.question(self, "확인", "변경된 파일이 없습니다.\n그래도 새 버전을 만드시겠습니까?", QMessageBox.Yes | QMessageBox.No)
                 if reply == QMessageBox.No:
+                    # '현재 버전에 저장'은 비활성화
+                    dialog = SaveOptionsDialog(modified_files, self.current_project.current_version, self.current_project.latest_version_number + 1, self)
+                    dialog.save_current_btn.setEnabled(False)
+                    dialog.save_current_btn.setToolTip("변경된 파일이 없어 저장할 내용이 없습니다.")
+                    if dialog.exec() and dialog.result_type == "new":
+                        new_version = self.current_project.create_new_version(dialog.description)
+                        self.refresh_all_ui()
+                        QMessageBox.information(self, "성공", f"v{new_version.number} 버전이 생성되었습니다.")
                     return
 
             next_version_num = self.current_project.latest_version_number + 1
@@ -274,19 +282,13 @@ class MainWindow(QMainWindow):
             if dialog.exec():
                 save_type, description = dialog.get_result()
                 if save_type == "current":
-                    if not modified_files:
-                        QMessageBox.information(self, "알림", "변경된 파일이 없어 현재 버전에 저장할 내용이 없습니다.")
-                        return
-
-                    # --- NEW: 자동 로그 기록을 위해 변경된 파일 목록 전달 ---
-                    if self.current_project.save_to_current_version(modified_files):
-                        self.refresh_all_ui() # 로그가 업데이트되었으므로 히스토리도 새로고침
+                    if self.current_project.save_to_current_version():
+                        self.refresh_all_ui()
                         QMessageBox.information(self, "성공", f"v{self.current_project.current_version}에 현재 상태가 저장되었습니다.")
                     else:
                         QMessageBox.warning(self, "경고", "현재 버전에 저장할 수 없습니다.")
 
                 elif save_type == "new":
-                    # 새 버전 생성 시에는 기존 로직 유지 (create_new_version이 내부적으로 처리)
                     new_version = self.current_project.create_new_version(description)
                     self.refresh_all_ui()
                     QMessageBox.information(self, "성공", f"v{new_version.number} 버전이 생성되었습니다.")

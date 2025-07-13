@@ -80,10 +80,7 @@ class Version:
     description: str
     created_at: datetime
     files: List[str]
-    
-    # --- NEW: 추가된 필드 ---
     change_notes: str = ""  # 사용자가 직접 작성하는 변경 노트
-    auto_log: List[Dict[str, str]] = field(default_factory=list) # 자동 변경 로그
 
     @property
     def created_at_display(self) -> str:
@@ -92,20 +89,6 @@ class Version:
     @property
     def description_short(self) -> str:
         return StringUtils.truncate_text(self.description, 50)
-
-    @property
-    def auto_log_summary(self) -> str:
-        """자동 로그 요약 (UI 표시용)"""
-        if not self.auto_log:
-            return ""
-        added = sum(1 for log in self.auto_log if log.get("type") == "added")
-        removed = sum(1 for log in self.auto_log if log.get("type") == "removed")
-        modified = sum(1 for log in self.auto_log if log.get("type") == "modified")
-        parts = []
-        if added > 0: parts.append(f"+{added}")
-        if removed > 0: parts.append(f"-{removed}")
-        if modified > 0: parts.append(f"~{modified}")
-        return f"({', '.join(parts)})" if parts else ""
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -113,8 +96,7 @@ class Version:
             "description": self.description,
             "created_at": self.created_at.isoformat(),
             "files": self.files,
-            "change_notes": self.change_notes,
-            "auto_log": self.auto_log
+            "change_notes": self.change_notes
         }
     
     @classmethod
@@ -123,9 +105,8 @@ class Version:
             number=data["number"],
             description=data["description"],
             created_at=datetime.fromisoformat(data["created_at"]),
-            files=data["files"],
-            change_notes=data.get("change_notes", ""), # 이전 버전 호환
-            auto_log=data.get("auto_log", [])       # 이전 버전 호환
+            files=data.get("files", []),
+            change_notes=data.get("change_notes", "")
         )
 
 
@@ -136,35 +117,19 @@ class ProjectSettings:
     description: str = ""
     created_at: datetime = None
     author: str = ""
-    tags: List[str] = None
+    tags: List[str] = field(default_factory=list)
     
     def __post_init__(self):
         if self.created_at is None:
             self.created_at = datetime.now()
-        if self.tags is None:
-            self.tags = []
     
     def to_dict(self) -> Dict[str, Any]:
-        """딕셔너리로 변환"""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "created_at": self.created_at.isoformat(),
-            "author": self.author,
-            "tags": self.tags
-        }
-    
+        return asdict(self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None})
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ProjectSettings':
-        """딕셔너리에서 설정 객체 생성"""
-        created_at = datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now()
-        return cls(
-            name=data["name"],
-            description=data.get("description", ""),
-            created_at=created_at,
-            author=data.get("author", ""),
-            tags=data.get("tags", [])
-        )
+        data['created_at'] = datetime.fromisoformat(data['created_at']) if 'created_at' in data else datetime.now()
+        return cls(**data)
 
 
 @dataclass
@@ -176,29 +141,18 @@ class FileDiff:
     old_content: str = ""
     new_content: str = ""
     is_text_file: bool = True
-    diff_lines: List[tuple] = None  # (change_type, line_content)
-    
-    def __post_init__(self):
-        if self.diff_lines is None:
-            self.diff_lines = []
+    diff_lines: List[tuple] = field(default_factory=list)
     
     @property
     def has_changes(self) -> bool:
-        """변경사항 존재 여부"""
         return self.old_content != self.new_content
     
     @property
     def change_summary(self) -> str:
-        """변경사항 요약"""
-        if not self.has_changes:
-            return "변경 없음"
-        
-        if not self.old_content:
-            return "새 파일"
-        elif not self.new_content:
-            return "파일 삭제"
-        else:
-            return "파일 수정"
+        if not self.has_changes: return "변경 없음"
+        if not self.old_content: return "새 파일"
+        elif not self.new_content: return "파일 삭제"
+        else: return "파일 수정"
 
 
 @dataclass 
@@ -209,33 +163,24 @@ class SearchResult:
     line_number: int
     line_content: str
     match_text: str
-    context_before: List[str] = None
-    context_after: List[str] = None
-    
-    def __post_init__(self):
-        if self.context_before is None:
-            self.context_before = []
-        if self.context_after is None:
-            self.context_after = []
+    context_before: List[str] = field(default_factory=list)
+    context_after: List[str] = field(default_factory=list)
     
     @property
     def display_text(self) -> str:
-        """표시용 텍스트"""
         return f"v{self.version.number} - {os.path.basename(self.file_path)} (Line {self.line_number})"
 
 
 class ProjectData:
     """프로젝트 전체 데이터를 담는 컨테이너"""
-    
     def __init__(self):
         self.settings: ProjectSettings = None
         self.current_version: int = 0
         self.tracked_files: List[str] = []
         self.versions: List[Version] = []
-        self.file_hashes: Dict[str, str] = {}  # 파일경로 -> 해시
+        self.file_hashes: Dict[str, str] = {}
         
     def to_dict(self) -> Dict[str, Any]:
-        """전체 프로젝트 데이터를 딕셔너리로 변환"""
         return {
             "settings": self.settings.to_dict() if self.settings else {},
             "current_version": self.current_version,
@@ -246,47 +191,32 @@ class ProjectData:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ProjectData':
-        """딕셔너리에서 프로젝트 데이터 생성"""
         project_data = cls()
-        
-        # 설정 정보 로드
         if "settings" in data and data["settings"]:
             project_data.settings = ProjectSettings.from_dict(data["settings"])
-        
-        # 기본 정보 로드
         project_data.current_version = data.get("current_version", 0)
         project_data.tracked_files = data.get("tracked_files", [])
         project_data.file_hashes = data.get("file_hashes", {})
-        
-        # 버전 정보 로드
-        for version_data in data.get("versions", []):
-            version = Version.from_dict(version_data)
-            project_data.versions.append(version)
-        
+        project_data.versions = [Version.from_dict(v_data) for v_data in data.get("versions", [])]
         return project_data
     
     def get_version_by_number(self, version_number: int) -> Optional[Version]:
-        """버전 번호로 버전 객체 찾기"""
         for version in self.versions:
             if version.number == version_number:
                 return version
         return None
     
     def get_latest_version(self) -> Optional[Version]:
-        """최신 버전 반환"""
         if not self.versions:
             return None
         return max(self.versions, key=lambda v: v.number)
     
     def add_version(self, version: Version):
-        """새 버전 추가"""
         self.versions.append(version)
         self.current_version = version.number
     
     def update_file_hash(self, file_path: str, hash_value: str):
-        """파일 해시 업데이트"""
         self.file_hashes[file_path] = hash_value
     
     def get_file_hash(self, file_path: str) -> str:
-        """파일 해시 조회"""
         return self.file_hashes.get(file_path, "")

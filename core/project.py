@@ -140,38 +140,15 @@ class Project:
         all_statuses = self.get_file_statuses()
         return [s for s in all_statuses if s.change_type != FileChangeType.UNCHANGED]
 
-    
-    def save_to_current_version(self, modified_statuses: List[FileStatus]) -> bool:
-        """현재 버전에 변경사항을 저장하고, 자동 로그를 기록하며 해시를 갱신합니다."""
+    def save_to_current_version(self) -> bool:
         if self.current_version == 0:
             raise Exception("Cannot save to version 0. Please create a new version.")
         
         current_version_obj = self.data.get_version_by_number(self.current_version)
         if not current_version_obj: return False
 
-        # --- NEW: UI에서 전달받은 FileStatus를 기반으로 자동 로그 기록 ---
-        new_log_entries = []
-        for status in modified_statuses:
-            # FileChangeType Enum의 값을 문자열로 변환
-            log_type = status.change_type.value
-            new_log_entries.append({"type": log_type, "path": status.path})
-        
-        if new_log_entries:
-            current_version_obj.auto_log.extend(new_log_entries)
-
-        # 현재 버전에서 추적하는 모든 파일에 대해 해시 업데이트
         self.update_file_hashes(current_version_obj.files)
         current_version_obj.created_at = datetime.now()
-        self.save_config()
-        return True
-
-    def update_version_notes(self, version_number: int, notes: str) -> bool:
-        """특정 버전의 사용자 노트를 업데이트합니다."""
-        version_to_update = self.data.get_version_by_number(version_number)
-        if not version_to_update:
-            return False
-        
-        version_to_update.change_notes = notes
         self.save_config()
         return True
 
@@ -184,7 +161,7 @@ class Project:
                 self.data.update_file_hash(rel_path, new_hash)
             elif rel_path in self.data.file_hashes:
                 del self.data.file_hashes[rel_path]
-                
+    
     def get_all_changes(self) -> Dict[str, List[str]]:
         changes = {"added": [], "removed": [], "modified": []}
         baseline_files = set()
@@ -220,14 +197,12 @@ class Project:
     def apply_sync_changes(self, changes: Dict[str, List[str]]):
         added_files = changes.get("added", [])
         removed_files = changes.get("removed", [])
-
-        # BUG FIX: 삭제된 파일을 전체 추적 목록과 해시에서도 제거합니다.
+        
         tracked_set = set(self.data.tracked_files)
         tracked_set.update(added_files)
-        tracked_set.difference_update(removed_files) # 삭제된 파일 제거
+        tracked_set.difference_update(removed_files)
         self.data.tracked_files = sorted(list(tracked_set))
         
-        # 삭제된 파일의 해시 정보도 제거
         for removed_file in removed_files:
             if removed_file in self.data.file_hashes:
                 del self.data.file_hashes[removed_file]
@@ -243,26 +218,11 @@ class Project:
         self.update_file_hashes(added_files)
         self.save_config()
 
-    def remove_tracked_file(self, relative_path: str) -> bool:
-        """추적 파일 제거 시, 모든 관련 기록에서 삭제합니다."""
-        # 1. 전체 추적 목록에서 제거
-        if relative_path in self.data.tracked_files:
-            self.data.tracked_files.remove(relative_path)
-
-        # 2. 모든 버전의 파일 목록에서 해당 파일 기록 제거
-        for version in self.data.versions:
-            if relative_path in version.files:
-                version.files.remove(relative_path)
-        
-        # 3. 해시 기록에서 제거
-        if relative_path in self.data.file_hashes:
-            del self.data.file_hashes[relative_path]
-
-        # 4. 현재 작업 폴더에서 실제 파일 삭제
-        file_to_delete = self.get_working_file_path(relative_path)
-        if os.path.exists(file_to_delete):
-            os.remove(file_to_delete)
-
+    def update_version_notes(self, version_number: int, notes: str) -> bool:
+        version_to_update = self.data.get_version_by_number(version_number)
+        if not version_to_update:
+            return False
+        version_to_update.change_notes = notes
         self.save_config()
         return True
 
@@ -298,6 +258,20 @@ class Project:
         target_version = self.data.get_version_by_number(version_number)
         if not target_version: return False
         self.data.current_version = version_number
+        self.save_config()
+        return True
+
+    def remove_tracked_file(self, relative_path: str) -> bool:
+        if relative_path in self.data.tracked_files:
+            self.data.tracked_files.remove(relative_path)
+        for version in self.data.versions:
+            if relative_path in version.files:
+                version.files.remove(relative_path)
+        if relative_path in self.data.file_hashes:
+            del self.data.file_hashes[relative_path]
+        file_to_delete = self.get_working_file_path(relative_path)
+        if os.path.exists(file_to_delete):
+            os.remove(file_to_delete)
         self.save_config()
         return True
 
