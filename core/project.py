@@ -43,11 +43,10 @@ class Project:
 
     @classmethod
     def create_new(cls, project_name: str, path_manager: PathManager,
-                   initial_files: Optional[List[str]] = None,
+                   initial_files: Optional[List[str]] = None, 
                    project_settings: Optional[ProjectSettings] = None) -> 'Project':
         is_valid, error_msg = ValidationUtils.is_valid_project_name(project_name)
         if not is_valid: raise ValueError(error_msg)
-        
         project_root = path_manager.get_project_root(project_name)
         if os.path.exists(project_root) and os.listdir(project_root):
             raise ValueError(f"프로젝트 '{project_name}'이 이미 존재하며 비어있지 않습니다.")
@@ -63,7 +62,6 @@ class Project:
             project.create_new_version("프로젝트 초기 생성", initial_files_from_outside=initial_files)
         else:
             project.save_config()
-            
         return project
 
     def create_new_version(self, description: str, initial_files_from_outside: Optional[List[str]] = None):
@@ -86,15 +84,13 @@ class Project:
         else:
             source_dir = self.current_version_dir
             if source_dir and os.path.exists(source_dir):
-                # 하위 폴더까지 모두 복사
                 shutil.copytree(source_dir, new_version_dir, dirs_exist_ok=True)
-                # 복사 후 파일 목록 다시 스캔
                 for root, _, files in os.walk(new_version_dir):
                     for file in files:
                         full_path = os.path.join(root, file)
                         rel_path = os.path.relpath(full_path, new_version_dir)
                         files_for_this_version.append(os.path.normpath(rel_path).replace('\\', '/'))
-        
+
         self.data.current_version = new_version_num
         self.update_file_hashes(files_for_this_version)
 
@@ -122,38 +118,78 @@ class Project:
             statuses.append(status)
         return statuses
 
-    # BUG FIX: 실수로 삭제되었던 get_modified_files 메서드를 복원합니다.
     def get_modified_files(self) -> List[FileStatus]:
-        """변경된 파일들만 반환합니다."""
         all_statuses = self.get_file_statuses()
         return [s for s in all_statuses if s.change_type != FileChangeType.UNCHANGED]
 
     def save_to_current_version(self) -> bool:
         if self.current_version == 0:
             raise Exception("Cannot save to version 0. Please create a new version.")
-
         current_version_obj = self.data.get_version_by_number(self.current_version)
         if not current_version_obj: return False
-
         self.update_file_hashes(current_version_obj.files)
-        
         current_version_obj.created_at = datetime.now()
         self.save_config()
         return True
 
     def update_file_hashes(self, file_paths_to_update: List[str]):
-        if not self.current_version_dir:
-            return
-
+        if not self.current_version_dir: return
         for rel_path in file_paths_to_update:
             full_path = self.get_working_file_path(rel_path)
             if os.path.exists(full_path):
-                new_hash = FileUtils.get_file_hash(full_path)
-                self.data.update_file_hash(rel_path, new_hash)
+                self.data.update_file_hash(rel_path, FileUtils.get_file_hash(full_path))
             elif rel_path in self.data.file_hashes:
                 del self.data.file_hashes[rel_path]
-                
-    # ... 이하 다른 메서드들은 이전과 동일하게 유지 ...
+
+    def get_all_changes(self) -> Dict[str, List[str]]:
+        changes = {"added": [], "removed": [], "modified": []}
+        baseline_files = set()
+        current_version_obj = self.data.get_version_by_number(self.current_version)
+        if current_version_obj:
+            baseline_files = set(current_version_obj.files)
+        
+        saved_hashes = self.data.file_hashes
+        working_files = set()
+        if self.current_version_dir and os.path.exists(self.current_version_dir):
+            for root, _, files in os.walk(self.current_version_dir):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, self.current_version_dir)
+                    norm_path = os.path.normpath(rel_path).replace('\\', '/')
+                    working_files.add(norm_path)
+
+        changes["removed"] = sorted(list(baseline_files - working_files))
+
+        for rel_path in working_files:
+            if rel_path not in baseline_files:
+                changes["added"].append(rel_path)
+            else:
+                current_hash = FileUtils.get_file_hash(self.get_working_file_path(rel_path))
+                saved_hash = saved_hashes.get(rel_path, "")
+                if current_hash != saved_hash:
+                    changes["modified"].append(rel_path)
+        
+        changes["added"].sort()
+        changes["modified"].sort()
+        return changes
+
+    def apply_sync_changes(self, changes: Dict[str, List[str]]):
+        added_files = changes.get("added", [])
+        removed_files = changes.get("removed", [])
+        tracked_set = set(self.data.tracked_files)
+        tracked_set.update(added_files)
+        self.data.tracked_files = sorted(list(tracked_set))
+
+        if self.current_version > 0:
+            current_version_obj = self.data.get_version_by_number(self.current_version)
+            if current_version_obj:
+                current_files_set = set(current_version_obj.files)
+                current_files_set.update(added_files)
+                current_files_set.difference_update(removed_files)
+                current_version_obj.files = sorted(list(current_files_set))
+        self.save_config()
+
+    # ... 이하 다른 메서드들은 이전과 동일 ...
     @classmethod
     def load_from_config(cls, config_path: str, path_manager: PathManager) -> 'Project':
         config_data = JsonUtils.load_json(config_path)
@@ -167,99 +203,37 @@ class Project:
     def add_tracked_files(self, file_paths: List[str]):
         if not self.current_version_dir:
             raise Exception("Cannot add files: No active version. Please create a version first.")
-
         for file_path in file_paths:
             file_name = os.path.basename(file_path)
             dest_path = os.path.join(self.current_version_dir, file_name)
-            
             if os.path.abspath(file_path) != os.path.abspath(dest_path):
                 shutil.copy2(file_path, dest_path)
-            
-            # 프로젝트 전체 추적 목록에 추가 (중복 방지)
             if file_name not in self.data.tracked_files:
                 self.data.tracked_files.append(file_name)
-            
-            # 현재 버전의 파일 목록에도 추가 (중복 방지)
             current_version_obj = self.data.get_version_by_number(self.current_version)
             if current_version_obj and file_name not in current_version_obj.files:
                 current_version_obj.files.append(file_name)
-
-        self.save_config()
-        # 저장 후, 새로 추가된 파일의 해시도 기록
         self.update_file_hashes([os.path.basename(p) for p in file_paths])
         self.save_config()
 
-
     def rollback_to_version(self, version_number: int) -> bool:
         target_version = self.data.get_version_by_number(version_number)
-        if not target_version:
-            return False
+        if not target_version: return False
         self.data.current_version = version_number
         self.save_config()
         return True
 
-    def sync_project_folder(self) -> Dict[str, List[str]]:
-        baseline_files = set()
-        if self.current_version > 0:
-            current_version_obj = self.data.get_version_by_number(self.current_version)
-            if current_version_obj:
-                baseline_files = set(current_version_obj.files)
-
-        working_dir_files = set()
-        if self.current_version_dir and os.path.exists(self.current_version_dir):
-             for root, _, files in os.walk(self.current_version_dir):
-                for file in files:
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, self.current_version_dir)
-                    working_dir_files.add(os.path.normpath(rel_path).replace('\\', '/'))
-        
-        changes = {
-            "added": sorted(list(working_dir_files - baseline_files)),
-            "removed": sorted(list(baseline_files - working_dir_files)),
-            "existing": sorted(list(working_dir_files & baseline_files))
-        }
-        return changes
-
-    def apply_sync_changes(self, changes: Dict[str, List[str]]):
-        tracked_set = set(self.data.tracked_files)
-        tracked_set.update(changes["added"])
-        self.data.tracked_files = sorted(list(tracked_set))
-
-        if self.current_version > 0:
-            current_version_obj = self.data.get_version_by_number(self.current_version)
-            if current_version_obj:
-                current_files_set = set(current_version_obj.files)
-                current_files_set.update(changes["added"])
-                current_files_set.difference_update(changes["removed"])
-                current_version_obj.files = sorted(list(current_files_set))
-        
-        # 싱크 후 추가된 파일들의 해시를 기록해야 다음 변경 감지가 가능
-        self.update_file_hashes(changes["added"])
-        self.save_config()
-
-
     def remove_tracked_file(self, relative_path: str) -> bool:
-        # 이 기능은 이제 모든 버전에서 해당 파일을 제거하고, 실제 파일도 삭제해야 함
-        # 주의: 위험한 작업일 수 있으므로 사용자 확인 필요
-        
-        # 1. 전체 추적 목록에서 제거
         if relative_path in self.data.tracked_files:
             self.data.tracked_files.remove(relative_path)
-
-        # 2. 모든 버전의 파일 목록에서 제거
         for version in self.data.versions:
             if relative_path in version.files:
                 version.files.remove(relative_path)
-        
-        # 3. 해시 기록에서 제거
         if relative_path in self.data.file_hashes:
             del self.data.file_hashes[relative_path]
-
-        # 4. 현재 작업 폴더에서 실제 파일 삭제
         file_to_delete = self.get_working_file_path(relative_path)
         if os.path.exists(file_to_delete):
             os.remove(file_to_delete)
-
         self.save_config()
         return True
 
@@ -270,11 +244,7 @@ class Project:
     def compare_with_current(self, version_number: int, file_path: str) -> FileDiff:
         old_version_file_path = os.path.join(self.versions_dir, f"v{version_number}", file_path)
         current_version_file_path = self.get_working_file_path(file_path)
-        
-        return self.diff_engine.compare_two_paths(
-            old_version_file_path, current_version_file_path,
-            str(version_number), "current", file_path
-        )
+        return self.diff_engine.compare_two_paths(old_version_file_path, current_version_file_path, str(version_number), "current", file_path)
 
     def get_version_changes(self, old_version: int, new_version: int) -> Dict[str, FileDiff]:
         old_v_obj = self.data.get_version_by_number(old_version)
@@ -287,17 +257,16 @@ class Project:
             if diff.has_changes:
                 changes[file_path] = diff
         return changes
-        
+
     def get_version_changes_with_working(self, version_number: int) -> Dict[str, FileDiff]:
         v_obj = self.data.get_version_by_number(version_number)
         current_files = set()
         if self.current_version_dir and os.path.exists(self.current_version_dir):
-             for root, _, files in os.walk(self.current_version_dir):
+            for root, _, files in os.walk(self.current_version_dir):
                 for file in files:
                     full_path = os.path.join(root, file)
                     rel_path = os.path.relpath(full_path, self.current_version_dir)
                     current_files.add(os.path.normpath(rel_path).replace('\\', '/'))
-
         if not v_obj: return {}
         all_files = set(v_obj.files) | current_files
         changes = {}
