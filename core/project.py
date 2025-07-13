@@ -33,6 +33,12 @@ class Project:
             return None
         return os.path.join(self.versions_dir, f"v{self.current_version}")
 
+    @property
+    def latest_version_number(self) -> int:
+        """현재 프로젝트의 가장 마지막 버전 번호를 반환합니다."""
+        latest_version = self.data.get_latest_version()
+        return latest_version.number if latest_version else 0
+
     def get_working_file_path(self, relative_path: str) -> str:
         if not self.current_version_dir:
             return os.path.join(self.root_path, relative_path)
@@ -47,6 +53,7 @@ class Project:
                    project_settings: Optional[ProjectSettings] = None) -> 'Project':
         is_valid, error_msg = ValidationUtils.is_valid_project_name(project_name)
         if not is_valid: raise ValueError(error_msg)
+        
         project_root = path_manager.get_project_root(project_name)
         if os.path.exists(project_root) and os.listdir(project_root):
             raise ValueError(f"프로젝트 '{project_name}'이 이미 존재하며 비어있지 않습니다.")
@@ -68,7 +75,8 @@ class Project:
         is_valid, error_msg = ValidationUtils.is_valid_version_description(description)
         if not is_valid: raise ValueError(error_msg)
 
-        new_version_num = self.data.current_version + 1
+        new_version_num = self.latest_version_number + 1
+        
         new_version_dir = os.path.join(self.versions_dir, f"v{new_version_num}")
         FileUtils.ensure_dir(new_version_dir)
         
@@ -137,10 +145,11 @@ class Project:
         for rel_path in file_paths_to_update:
             full_path = self.get_working_file_path(rel_path)
             if os.path.exists(full_path):
-                self.data.update_file_hash(rel_path, FileUtils.get_file_hash(full_path))
+                new_hash = FileUtils.get_file_hash(full_path)
+                self.data.update_file_hash(rel_path, new_hash)
             elif rel_path in self.data.file_hashes:
                 del self.data.file_hashes[rel_path]
-
+                
     def get_all_changes(self) -> Dict[str, List[str]]:
         changes = {"added": [], "removed": [], "modified": []}
         baseline_files = set()
@@ -187,9 +196,9 @@ class Project:
                 current_files_set.update(added_files)
                 current_files_set.difference_update(removed_files)
                 current_version_obj.files = sorted(list(current_files_set))
+        self.update_file_hashes(added_files)
         self.save_config()
 
-    # ... 이하 다른 메서드들은 이전과 동일 ...
     @classmethod
     def load_from_config(cls, config_path: str, path_manager: PathManager) -> 'Project':
         config_data = JsonUtils.load_json(config_path)

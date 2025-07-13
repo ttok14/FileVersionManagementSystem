@@ -50,53 +50,6 @@ class MainWindow(QMainWindow):
         
         self.enable_project_actions(False)
 
-    def save_changes(self):
-        """변경사항 저장 또는 새 버전 생성"""
-        if not self.current_project:
-            return
-
-        try:
-            # BUG FIX: 변경사항이 있는지 확인하는 로직을 제거합니다.
-            # 이제 사용자는 변경사항이 없어도 언제든지 새 버전을 생성할 수 있습니다.
-            modified_files = self.current_project.get_modified_files()
-
-            # 저장 옵션 다이얼로그를 무조건 띄웁니다.
-            dialog = SaveOptionsDialog(
-                modified_files,  # 변경 파일 목록은 UI 표시에만 사용
-                self.current_project.current_version,
-                self
-            )
-
-            if dialog.exec():
-                save_type, description = dialog.get_result()
-                
-                if save_type == "current":
-                    # 현재 버전에 저장
-                    success = self.current_project.save_to_current_version()
-                    if success:
-                        # 저장 후에는 UI를 새로고침하여 '변경됨' 상태를 없애줍니다.
-                        self.refresh_file_status() 
-                        QMessageBox.information(
-                            self, "성공",
-                            f"v{self.current_project.current_version}에 현재 상태가 저장되었습니다."
-                        )
-                    else:
-                        QMessageBox.warning(self, "경고", "현재 버전에 저장할 수 없습니다.")
-                        
-                elif save_type == "new":
-                    # 새 버전 생성
-                    new_version = self.current_project.create_new_version(description)
-                    self.refresh_all_ui() # 새 버전이 생겼으므로 전체 UI 새로고침
-                    QMessageBox.information(
-                        self, "성공",
-                        f"v{new_version.number} 버전이 생성되었습니다."
-                    )
-                
-        except Exception as e:
-            QMessageBox.critical(self, "오류", f"저장 실패:\n{str(e)}")
-
-
-    # ... 이하 코드는 이전과 동일합니다 ...
     def setup_ui(self):
         self.setWindowTitle("심플 파일 버전 관리")
         self.setGeometry(100, 100, 1400, 800)
@@ -275,6 +228,34 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "오류", f"동기화 실패:\n{str(e)}")
 
+    def save_changes(self):
+        if not self.current_project: return
+        try:
+            modified_files = self.current_project.get_modified_files()
+            
+            next_version_num = self.current_project.latest_version_number + 1
+            dialog = SaveOptionsDialog(
+                modified_files,
+                self.current_project.current_version,
+                next_version_num,
+                self
+            )
+
+            if dialog.exec():
+                save_type, description = dialog.get_result()
+                if save_type == "current":
+                    if self.current_project.save_to_current_version():
+                        self.refresh_file_status() 
+                        QMessageBox.information(self, "성공", f"v{self.current_project.current_version}에 현재 상태가 저장되었습니다.")
+                    else:
+                        QMessageBox.warning(self, "경고", "현재 버전에 저장할 수 없습니다.")
+                elif save_type == "new":
+                    new_version = self.current_project.create_new_version(description)
+                    self.refresh_all_ui()
+                    QMessageBox.information(self, "성공", f"v{new_version.number} 버전이 생성되었습니다.")
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"저장 실패:\n{str(e)}")
+
     def rollback_to_version(self):
         if not self.current_project: return
         selected_version = self.version_history.get_selected_version()
@@ -434,6 +415,33 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("심플 파일 버전 관리")
+    app.setApplicationVersion("1.0.0")
+    app.setOrganizationName("SimpleDev")
+    app.setStyleSheet("""
+        QMainWindow { background-color: #f5f5f5; }
+        QGroupBox { font-weight: bold; border: 2px solid #cccccc; border-radius: 8px; margin-top: 1ex; padding-top: 10px; background-color: white; }
+        QGroupBox::title { subcontrol-origin: margin; left: 15px; padding: 0 8px 0 8px; background-color: white; }
+        QTreeWidget, QListWidget { border: 1px solid #dddddd; border-radius: 6px; background-color: white; alternate-background-color: #f9f9f9; }
+        QListWidget::item { padding: 10px; border-bottom: 1px solid #eeeeee; min-height: 20px; }
+        QListWidget::item:selected, QTreeWidget::item:selected { background-color: #e3f2fd; }
+        QListWidget::item:hover, QTreeWidget::item:hover { background-color: #f0f8ff; }
+        QTreeWidget::item { padding: 8px; min-height: 20px; }
+        QPushButton { padding: 8px 16px; border: 1px solid #cccccc; border-radius: 6px; background-color: #ffffff; font-weight: normal; min-height: 16px; }
+        QPushButton:hover { background-color: #f0f0f0; border-color: #999999; }
+        QPushButton:pressed { background-color: #e0e0e0; }
+        QPushButton:disabled { background-color: #f5f5f5; color: #999999; border-color: #dddddd; }
+        QTextEdit { border: 1px solid #dddddd; border-radius: 6px; background-color: white; font-family: 'Consolas', 'Monaco', monospace; }
+        QTabWidget::pane { border: 1px solid #cccccc; border-radius: 6px; background-color: white; }
+        QTabBar::tab { padding: 8px 16px; margin-right: 2px; background-color: #f0f0f0; border: 1px solid #cccccc; border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px; }
+        QTabBar::tab:selected { background-color: white; border-bottom: 1px solid white; }
+        QMenuBar { background-color: #f8f8f8; border-bottom: 1px solid #cccccc; }
+        QMenuBar::item { padding: 6px 12px; background-color: transparent; }
+        QMenuBar::item:selected { background-color: #e0e0e0; border-radius: 4px; }
+        QStatusBar { background-color: #f8f8f8; border-top: 1px solid #cccccc; }
+        QToolBar { background-color: #f8f8f8; border-bottom: 1px solid #cccccc; spacing: 4px; padding: 4px; }
+        QSplitter::handle { background-color: #cccccc; width: 2px; height: 2px; }
+        QSplitter::handle:hover { background-color: #2196F3; }
+    """)
     window = MainWindow()
     window.show()
     window.status_widget.update_status("새 프로젝트를 생성하거나 기존 프로젝트를 열어주세요")
