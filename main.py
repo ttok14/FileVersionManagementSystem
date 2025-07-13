@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
 
     def setup_menus(self):
         menubar = self.menuBar()
+        
         file_menu = menubar.addMenu("파일(&F)")
         self.new_project_action = QAction("새 프로젝트(&N)", self); self.new_project_action.setShortcut(QKeySequence.New); self.new_project_action.triggered.connect(self.create_new_project); file_menu.addAction(self.new_project_action)
         self.open_project_action = QAction("프로젝트 열기(&O)", self); self.open_project_action.setShortcut(QKeySequence.Open); self.open_project_action.triggered.connect(self.open_project); file_menu.addAction(self.open_project_action)
@@ -131,17 +132,27 @@ class MainWindow(QMainWindow):
         self.save_action = QAction("저장(&S)", self); self.save_action.setShortcut(QKeySequence.Save); self.save_action.triggered.connect(self.save_changes); file_menu.addAction(self.save_action)
         file_menu.addSeparator()
         self.exit_action = QAction("종료(&X)", self); self.exit_action.setShortcut(QKeySequence.Quit); self.exit_action.triggered.connect(self.close); file_menu.addAction(self.exit_action)
+        
         edit_menu = menubar.addMenu("편집(&E)")
-        self.sync_action = QAction("폴더 동기화(&Y)", self); self.sync_action.setShortcut(QKeySequence("F5")); self.sync_action.triggered.connect(self.perform_sync); edit_menu.addAction(self.sync_action)
+        
+        # BUG FIX: 중복된 메뉴를 제거하고 '싱크' 하나로 통일합니다.
+        self.sync_action = QAction("싱크(&Y)", self)
+        self.sync_action.setShortcut(QKeySequence("F5"))
+        self.sync_action.triggered.connect(self.perform_sync)
+        edit_menu.addAction(self.sync_action)
+        
         edit_menu.addSeparator()
         self.search_action = QAction("검색(&F)", self); self.search_action.setShortcut(QKeySequence.Find); self.search_action.triggered.connect(self.show_search_dialog); edit_menu.addAction(self.search_action)
+        
         project_menu = menubar.addMenu("프로젝트(&P)")
         self.project_settings_action = QAction("프로젝트 설정(&S)", self); self.project_settings_action.triggered.connect(self.edit_project_settings); project_menu.addAction(self.project_settings_action)
         project_menu.addSeparator()
         self.add_files_action = QAction("파일 추가(&A)", self); self.add_files_action.triggered.connect(self.add_files_to_track); project_menu.addAction(self.add_files_action)
+        
         view_menu = menubar.addMenu("보기(&V)")
         self.show_diff_action = QAction("변경사항 보기(&D)", self); self.show_diff_action.triggered.connect(self.show_selected_file_diff); view_menu.addAction(self.show_diff_action)
         self.compare_versions_action = QAction("버전 비교(&C)", self); self.compare_versions_action.triggered.connect(self.show_version_compare_dialog); view_menu.addAction(self.compare_versions_action)
+        
         help_menu = menubar.addMenu("도움말(&H)")
         self.about_action = QAction("정보(&A)", self); self.about_action.triggered.connect(self.show_about); help_menu.addAction(self.about_action)
 
@@ -413,7 +424,9 @@ class MainWindow(QMainWindow):
     def show_about(self): QMessageBox.about(self, "정보", "심플 파일 버전 관리 v1.0\n\n간단하고 직관적인 파일 버전 관리 도구입니다.")
 
 def main():
+    """메인 함수"""
     app = QApplication(sys.argv)
+    
     app.setApplicationName("심플 파일 버전 관리")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("SimpleDev")
@@ -452,13 +465,23 @@ def main():
             border-bottom: 1px solid #eeeeee;
             min-height: 20px;
         }
-        
-        QTreeWidget::item, QListWidget::item:selected {
-            background-color: #e3f2fd;
+
+        /* BUG FIX: 스타일 우선순위 문제를 해결합니다. */
+
+        /* 1. 마우스를 올렸을 때의 기본 스타일 */
+        QTreeWidget::item:hover, QListWidget::item:hover {
+            background-color: #e3f2fd; /* 연한 하늘색 배경 */
+        }
+
+        /* 2. 선택했을 때의 스타일 (hover보다 아래에 정의하여 우선순위를 높임) */
+        QTreeWidget::item:selected, QListWidget::item:selected {
+            background-color: #0078d7; /* 진한 파란색 배경 */
+            color: white;              /* 흰색 글자 */
         }
         
-        QTreeWidget::item:hover, QListWidget::item:hover {
-            background-color: #f0f8ff;
+        /* 3. (선택사항) 선택된 상태에서 마우스를 올렸을 때의 미세한 변화 */
+        QTreeWidget::item:selected:hover, QListWidget::item:selected:hover {
+            background-color: #005a9e; /* 살짝 더 어두운 파란색 */
         }
 
         QTreeWidget::item {
@@ -556,9 +579,13 @@ def main():
         }
     """)
     
+    # 메인 윈도우 생성 및 표시
     window = MainWindow()
     window.show()
+    
+    # 시작 메시지
     window.status_widget.update_status("새 프로젝트를 생성하거나 기존 프로젝트를 열어주세요")
+    
     sys.exit(app.exec())
 
 if __name__ == "__main__":
