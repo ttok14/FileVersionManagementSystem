@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QGroupBox, QMessageBox, QFileDialog, QMenuBar,
     QMenu, QStatusBar, QToolBar, QTabWidget, QPushButton, QLabel,
-    QTextEdit  # QTextEdit import 확인
+    QTextEdit
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence, QIcon
@@ -35,20 +35,14 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.project_manager = ProjectManager()
         self.current_project: Optional[Project] = None
-
-        # UI 구성요소들
         self.file_tree: Optional[FileTreeWidget] = None
         self.version_history: Optional[VersionHistoryWidget] = None
         self.diff_viewer: Optional[DiffViewerWidget] = None
         self.project_info: Optional[ProjectInfoWidget] = None
         self.status_widget: Optional[StatusBarWidget] = None
-        
-        # BUG FIX: 새 UI 위젯 멤버 변수 초기화
         self.version_note_tab: Optional[QWidget] = None
         self.version_note_edit: Optional[QTextEdit] = None
         self.save_note_btn: Optional[QPushButton] = None
-
-        # 다이얼로그들
         self.search_dialog: Optional[SearchDialog] = None
         self.compare_dialog: Optional[VersionCompareDialog] = None
         
@@ -60,6 +54,71 @@ class MainWindow(QMainWindow):
         
         self.enable_project_actions(False)
 
+    def save_changes(self):
+        """변경사항 저장 또는 새 버전 생성 시, 현재 열린 노트도 함께 저장합니다."""
+        if not self.current_project: return
+        
+        try:
+            # --- NEW: 버전 저장 전, 현재 노트 내용을 먼저 저장합니다. ---
+            self.save_current_note(show_message=False)
+
+            modified_files = self.current_project.get_modified_files()
+            
+            if not modified_files:
+                reply = QMessageBox.question(self, "확인", "변경된 파일이 없습니다.\n그래도 새 버전을 만드시겠습니까?", QMessageBox.Yes | QMessageBox.No)
+                if reply == QMessageBox.No:
+                    # '현재 버전에 저장'은 비활성화
+                    dialog = SaveOptionsDialog(modified_files, self.current_project.current_version, self.current_project.latest_version_number + 1, self)
+                    dialog.save_current_btn.setEnabled(False)
+                    dialog.save_current_btn.setToolTip("변경된 파일이 없어 저장할 내용이 없습니다.")
+                    if dialog.exec() and dialog.result_type == "new":
+                        new_version = self.current_project.create_new_version(dialog.description)
+                        self.refresh_all_ui()
+                        QMessageBox.information(self, "성공", f"v{new_version.number} 버전이 생성되었습니다.")
+                    return
+
+            next_version_num = self.current_project.latest_version_number + 1
+            dialog = SaveOptionsDialog(modified_files, self.current_project.current_version, next_version_num, self)
+
+            if dialog.exec():
+                save_type, description = dialog.get_result()
+                if save_type == "current":
+                    if self.current_project.save_to_current_version():
+                        self.refresh_all_ui()
+                        QMessageBox.information(self, "성공", f"v{self.current_project.current_version}에 현재 상태가 저장되었습니다.")
+                    else:
+                        QMessageBox.warning(self, "경고", "현재 버전에 저장할 수 없습니다.")
+
+                elif save_type == "new":
+                    new_version = self.current_project.create_new_version(description)
+                    self.refresh_all_ui()
+                    QMessageBox.information(self, "성공", f"v{new_version.number} 버전이 생성되었습니다.")
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"저장 실패:\n{str(e)}")
+
+    def save_current_note(self, show_message=True):
+        """'노트 저장' 버튼 또는 다른 저장 로직에서 호출됩니다."""
+        if not self.current_project: return
+        
+        selected_version = self.version_history.get_selected_version()
+        if not selected_version:
+            if show_message:
+                QMessageBox.warning(self, "알림", "노트를 저장할 버전을 선택해주세요.")
+            return
+            
+        notes_text = self.version_note_edit.toPlainText()
+        
+        # 노트 내용이 실제로 변경되었을 때만 저장
+        if selected_version.change_notes != notes_text:
+            try:
+                success = self.current_project.update_version_notes(selected_version.number, notes_text)
+                if success and show_message:
+                    self.statusBar().showMessage(f"v{selected_version.number}의 노트가 저장되었습니다.", 2000)
+            except Exception as e:
+                if show_message:
+                    QMessageBox.critical(self, "오류", f"노트 저장 중 예외 발생: {e}")
+
+    # ... 이하 코드는 이전과 동일합니다 ...
     def setup_ui(self):
         self.setWindowTitle("심플 파일 버전 관리")
         self.setGeometry(100, 100, 1400, 800)
@@ -132,7 +191,6 @@ class MainWindow(QMainWindow):
         return widget
 
     def create_version_panel(self) -> QWidget:
-        # BUG FIX: super() 호출 대신 기존 방식대로 직접 UI를 구성합니다.
         panel = QGroupBox("📚 버전 히스토리")
         layout = QVBoxLayout(panel)
         self.version_history = VersionHistoryWidget()
@@ -145,7 +203,6 @@ class MainWindow(QMainWindow):
         version_buttons.addStretch()
         layout.addLayout(version_buttons)
         self.version_history.version_double_clicked.connect(self.on_version_double_clicked)
-        # 시그널 이름을 정확히 맞춰줍니다.
         self.version_history.version_selection_changed.connect(self.on_version_selection_changed)
         self.rollback_btn.clicked.connect(self.rollback_to_version)
         self.compare_btn.clicked.connect(self.show_version_compare_dialog)
@@ -257,44 +314,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "오류", f"동기화 실패:\n{str(e)}")
 
-    def save_changes(self):
-        if not self.current_project: return
-        try:
-            modified_files = self.current_project.get_modified_files()
-            
-            # 변경사항이 없어도 새 버전을 만들 수 있도록 함
-            if not modified_files:
-                reply = QMessageBox.question(self, "확인", "변경된 파일이 없습니다.\n그래도 새 버전을 만드시겠습니까?", QMessageBox.Yes | QMessageBox.No)
-                if reply == QMessageBox.No:
-                    # '현재 버전에 저장'은 비활성화
-                    dialog = SaveOptionsDialog(modified_files, self.current_project.current_version, self.current_project.latest_version_number + 1, self)
-                    dialog.save_current_btn.setEnabled(False)
-                    dialog.save_current_btn.setToolTip("변경된 파일이 없어 저장할 내용이 없습니다.")
-                    if dialog.exec() and dialog.result_type == "new":
-                        new_version = self.current_project.create_new_version(dialog.description)
-                        self.refresh_all_ui()
-                        QMessageBox.information(self, "성공", f"v{new_version.number} 버전이 생성되었습니다.")
-                    return
-
-            next_version_num = self.current_project.latest_version_number + 1
-            dialog = SaveOptionsDialog(modified_files, self.current_project.current_version, next_version_num, self)
-
-            if dialog.exec():
-                save_type, description = dialog.get_result()
-                if save_type == "current":
-                    if self.current_project.save_to_current_version():
-                        self.refresh_all_ui()
-                        QMessageBox.information(self, "성공", f"v{self.current_project.current_version}에 현재 상태가 저장되었습니다.")
-                    else:
-                        QMessageBox.warning(self, "경고", "현재 버전에 저장할 수 없습니다.")
-
-                elif save_type == "new":
-                    new_version = self.current_project.create_new_version(description)
-                    self.refresh_all_ui()
-                    QMessageBox.information(self, "성공", f"v{new_version.number} 버전이 생성되었습니다.")
-        except Exception as e:
-            QMessageBox.critical(self, "오류", f"저장 실패:\n{str(e)}")
-
     def rollback_to_version(self):
         if not self.current_project: return
         selected_version = self.version_history.get_selected_version()
@@ -317,21 +336,6 @@ class MainWindow(QMainWindow):
             self.version_note_edit.setText(version.change_notes)
         else:
             self.version_note_edit.clear()
-
-    def save_current_note(self):
-        if not self.current_project: return
-        selected_version = self.version_history.get_selected_version()
-        if not selected_version:
-            QMessageBox.warning(self, "알림", "노트를 저장할 버전을 선택해주세요.")
-            return
-        notes_text = self.version_note_edit.toPlainText()
-        try:
-            if self.current_project.update_version_notes(selected_version.number, notes_text):
-                self.statusBar().showMessage(f"v{selected_version.number}의 노트가 저장되었습니다.", 2000)
-            else:
-                QMessageBox.warning(self, "오류", "노트 저장에 실패했습니다.")
-        except Exception as e:
-            QMessageBox.critical(self, "오류", f"노트 저장 중 예외 발생: {e}")
 
     def closeEvent(self, event):
         if self.current_project:
@@ -457,12 +461,7 @@ class MainWindow(QMainWindow):
 
     def on_file_double_clicked(self, file_path): self.show_selected_file_diff()
 
-    def on_file_selection_changed(self, version=None):
-        if isinstance(version, Version): # from version history
-            if version: self.version_note_edit.setText(version.change_notes)
-            else: self.version_note_edit.clear()
-            return
-            
+    def on_file_selection_changed(self):
         selected_status = self.file_tree.get_selected_file_status()
         if selected_status and self.current_project:
             try:
@@ -478,9 +477,7 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("심플 파일 버전 관리")
-    app.setApplicationVersion("1.0.0")
-    app.setOrganizationName("SimpleDev")
+    app.setApplicationName("심플 파일 버전 관리"); app.setApplicationVersion("1.0.0"); app.setOrganizationName("SimpleDev")
     app.setStyleSheet("""
         QMainWindow { background-color: #f5f5f5; }
         QGroupBox { font-weight: bold; border: 2px solid #cccccc; border-radius: 8px; margin-top: 1ex; padding-top: 10px; background-color: white; }
