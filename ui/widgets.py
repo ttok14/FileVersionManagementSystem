@@ -1,16 +1,18 @@
 # ui/widgets.py
 # 커스텀 위젯 클래스들 - models에만 의존
 
+import os
+import sys
+import subprocess
 from typing import List, Optional, Dict
 from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QTextEdit, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QSplitter, QScrollArea,
     QFrame, QGroupBox, QTreeWidget, QTreeWidgetItem,
-    QTreeWidgetItemIterator  # BUG FIX: 누락된 클래스 import
+    QTreeWidgetItemIterator, QMenu
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QTextCharFormat, QTextCursor, QColor
-import os
+from PySide6.QtGui import QFont, QTextCharFormat, QTextCursor, QColor, QAction
 from datetime import datetime
 
 from core.models import FileStatus, Version, FileDiff, FileChangeType
@@ -20,6 +22,8 @@ class FileTreeWidget(QTreeWidget):
     """파일 트리 위젯 (폴더 구조 표시)"""
     
     file_double_clicked = Signal(str)
+    open_in_explorer_requested = Signal(str)
+    open_file_requested = Signal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -28,6 +32,61 @@ class FileTreeWidget(QTreeWidget):
         self.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.setColumnWidth(0, 220)
         self.setColumnWidth(1, 100)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
+
+    def show_context_menu(self, position):
+        """우클릭 시 컨텍스트 메뉴를 표시합니다."""
+        item = self.itemAt(position)
+        if not item:
+            return
+
+        status: Optional[FileStatus] = item.data(0, Qt.UserRole)
+        is_folder = item.childCount() > 0 and not status
+
+        menu = QMenu()
+        
+        open_explorer_action = QAction("📂 탐색기로 열기", self)
+        open_file_action = QAction("📄 파일 열기", self)
+
+        if status:  # 파일 아이템인 경우
+            if status.change_type != FileChangeType.DELETED:
+                open_explorer_action.triggered.connect(lambda: self.open_in_explorer_requested.emit(status.path))
+                menu.addAction(open_explorer_action)
+                open_file_action.triggered.connect(lambda: self.open_file_requested.emit(status.path))
+                menu.addAction(open_file_action)
+            else:
+                open_explorer_action.setEnabled(False)
+                open_file_action.setEnabled(False)
+                menu.addAction(open_explorer_action)
+                menu.addAction(open_file_action)
+
+        elif is_folder:  # 폴더 아이템인 경우
+            folder_path = self.get_folder_path(item)
+            if folder_path:
+                open_explorer_action.triggered.connect(lambda: self.open_in_explorer_requested.emit(folder_path))
+                menu.addAction(open_explorer_action)
+
+        if menu.actions():
+            menu.exec(self.viewport().mapToGlobal(position))
+
+    def get_folder_path(self, folder_item: QTreeWidgetItem) -> Optional[str]:
+        """폴더 아이템의 실제 경로를 찾습니다."""
+        # --- FINAL BUG FIX: 불필요한 두 번째 인자 제거 ---
+        iterator = QTreeWidgetItemIterator(folder_item)
+        
+        # 첫 번째 아이템은 자기 자신이므로 다음으로 넘어감
+        iterator += 1
+        
+        while iterator.value():
+            child_item = iterator.value()
+            if child_item:
+                child_status = child_item.data(0, Qt.UserRole)
+                if child_status:
+                    # 폴더 내의 첫 번째 파일 경로를 기준으로 디렉토리 경로 반환
+                    return os.path.dirname(child_status.path)
+            iterator += 1
+        return None
         
     def update_files(self, file_statuses: List[FileStatus]):
         self.clear()
@@ -123,21 +182,20 @@ class FileTreeWidget(QTreeWidget):
             return current_item.data(0, Qt.UserRole)
         return None
 
-# ... 이하 코드 동일 ...
+
 class VersionHistoryWidget(QListWidget):
     """버전 히스토리 위젯 (오른쪽 패널)"""
-    
     version_double_clicked = Signal(int)
-    version_selection_changed = Signal(Version) # Version 객체를 전달하는 새 시그널
+    version_selection_changed = Signal(Version)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(350)
         self.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self.currentItemChanged.connect(self._on_current_item_changed) # 선택 변경 시그널
+        self.currentItemChanged.connect(self._on_current_item_changed)
         
     def update_versions(self, versions: List[Version], current_version: int):
-        self.blockSignals(True) # 업데이트 중 신호 발생 방지
+        self.blockSignals(True)
         self.clear()
         
         selected_item = None
@@ -145,10 +203,7 @@ class VersionHistoryWidget(QListWidget):
             item = QListWidgetItem()
             current_indicator = "📍 " if version.number == current_version else ""
             
-            # --- NEW: 자동 로그 요약 정보 표시 ---
-            log_summary = version.auto_log_summary
-            
-            text = f"{current_indicator}v{version.number} - {version.description_short} {log_summary}\n"
+            text = f"{current_indicator}v{version.number} - {version.description_short}\n"
             text += f"📅 {version.created_at_display}\n"
             text += f"📄 파일 {len(version.files)}개"
             
@@ -157,9 +212,7 @@ class VersionHistoryWidget(QListWidget):
             
             if version.number == current_version:
                 item.setBackground(QColor(230, 240, 255))
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
+                font = item.font(); font.setBold(True); item.setFont(font)
                 selected_item = item
             
             tooltip_lines = [f"버전: v{version.number}", f"설명: {version.description}", f"생성일: {version.created_at_display}", f"포함된 파일: {len(version.files)}개"]
@@ -169,18 +222,16 @@ class VersionHistoryWidget(QListWidget):
         if selected_item:
             self.setCurrentItem(selected_item)
             
-        self.blockSignals(False) # 신호 발생 재개
-        # 수동으로 첫 선택 아이템에 대한 신호 발생
+        self.blockSignals(False)
         if self.currentItem():
             self._on_current_item_changed(self.currentItem(), None)
-    
+
     def _on_current_item_changed(self, current: QListWidgetItem, previous: QListWidgetItem):
-        """선택된 아이템이 변경될 때 신호를 보냅니다."""
         if current:
             version = current.data(Qt.UserRole)
             if version:
                 self.version_selection_changed.emit(version)
-                
+
     def _on_item_double_clicked(self, item: QListWidgetItem):
         version = item.data(Qt.UserRole)
         if version:
@@ -191,7 +242,6 @@ class VersionHistoryWidget(QListWidget):
         if current_item:
             return current_item.data(Qt.UserRole)
         return None
-
 
 class DiffViewerWidget(QWidget):
     """Diff 뷰어 위젯"""

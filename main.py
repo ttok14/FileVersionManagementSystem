@@ -4,6 +4,7 @@
 import sys
 import os
 import shutil
+import subprocess
 from typing import Optional, Dict, List
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -12,10 +13,10 @@ from PySide6.QtWidgets import (
     QTextEdit
 )
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence, QIcon
+from PySide6.QtGui import QAction, QKeySequence, QIcon, QFont
 
 # 프로젝트 모듈 import
-from common.utils import ValidationUtils
+from common.utils import ValidationUtils, FileUtils
 from core.models import ProjectSettings, FileStatus, Version, FileDiff, FileChangeType
 from core.project import Project, ProjectManager
 from ui.widgets import (
@@ -38,6 +39,8 @@ class MainWindow(QMainWindow):
         self.file_tree: Optional[FileTreeWidget] = None
         self.version_history: Optional[VersionHistoryWidget] = None
         self.diff_viewer: Optional[DiffViewerWidget] = None
+        # --- NEW: 내용 표시를 위한 위젯 추가 ---
+        self.content_viewer: Optional[QTextEdit] = None
         self.project_info: Optional[ProjectInfoWidget] = None
         self.status_widget: Optional[StatusBarWidget] = None
         self.version_note_tab: Optional[QWidget] = None
@@ -118,7 +121,6 @@ class MainWindow(QMainWindow):
                 if show_message:
                     QMessageBox.critical(self, "오류", f"노트 저장 중 예외 발생: {e}")
 
-    # ... 이하 코드는 이전과 동일합니다 ...
     def setup_ui(self):
         self.setWindowTitle("심플 파일 버전 관리")
         self.setGeometry(100, 100, 1400, 800)
@@ -157,6 +159,9 @@ class MainWindow(QMainWindow):
         layout.addLayout(file_buttons)
         self.file_tree.file_double_clicked.connect(self.on_file_double_clicked)
         self.file_tree.itemSelectionChanged.connect(self.on_file_selection_changed)
+        # --- NEW: 컨텍스트 메뉴 시그널 연결 ---
+        self.file_tree.open_in_explorer_requested.connect(self.open_in_explorer)
+        self.file_tree.open_file_requested.connect(self.open_file)
         self.sync_btn.clicked.connect(self.perform_sync)
         self.add_files_btn.clicked.connect(self.add_files_to_track)
         self.remove_files_btn.clicked.connect(self.remove_files_from_track)
@@ -166,8 +171,18 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         tab_widget = QTabWidget()
+
+        # --- NEW: '내용' 탭을 먼저 추가 ---
+        self.content_viewer = QTextEdit()
+        self.content_viewer.setReadOnly(True)
+        self.content_viewer.setFont(QFont("Consolas", 9))
+        self.content_viewer.setPlaceholderText("왼쪽 목록에서 파일을 선택하면 내용이 여기에 표시됩니다.")
+        tab_widget.addTab(self.content_viewer, "📄 내용")
+
+        # --- MODIFIED: '변경사항' 탭을 두 번째로 추가 ---
         self.diff_viewer = DiffViewerWidget()
         tab_widget.addTab(self.diff_viewer, "🔍 변경사항")
+        
         self.version_note_tab = self.create_version_note_tab()
         tab_widget.addTab(self.version_note_tab, "📝 버전 노트")
         self.project_info = ProjectInfoWidget()
@@ -462,18 +477,82 @@ class MainWindow(QMainWindow):
     def on_file_double_clicked(self, file_path): self.show_selected_file_diff()
 
     def on_file_selection_changed(self):
+        """파일 선택이 변경될 때 '내용' 탭과 '변경사항' 탭을 모두 업데이트합니다."""
         selected_status = self.file_tree.get_selected_file_status()
+        
+        # 뷰어 초기화
+        self.diff_viewer.clear_diff()
+        self.content_viewer.clear()
+
         if selected_status and self.current_project:
             try:
+                # 1. '변경사항' 탭 업데이트 (기존 로직)
                 diff = self.current_project.compare_with_current(self.current_project.current_version, selected_status.path)
                 self.diff_viewer.show_diff(diff)
-            except:
+
+                # 2. '내용' 탭 업데이트 (신규 로직)
+                if selected_status.change_type == FileChangeType.DELETED:
+                    self.content_viewer.setPlainText("삭제된 파일입니다.")
+                elif not selected_status.is_text_file:
+                    self.content_viewer.setPlainText(f"바이너리 파일은 내용을 표시할 수 없습니다.\n\n파일 경로: {selected_status.path}\n파일 크기: {selected_status.size_display}")
+                else:
+                    # 현재 작업 버전 디렉토리에서 파일 경로를 가져옴
+                    file_path_in_version = self.current_project.get_working_file_path(selected_status.path)
+                    if os.path.exists(file_path_in_version):
+                        content = FileUtils.read_file_content(file_path_in_version)
+                        self.content_viewer.setPlainText(content)
+                    else:
+                        self.content_viewer.setPlainText("파일을 찾을 수 없습니다.")
+
+            except Exception as e:
                 self.diff_viewer.clear_diff()
+                self.content_viewer.setPlainText(f"파일 내용을 불러오는 중 오류가 발생했습니다:\n{e}")
         else:
-            self.diff_viewer.clear_diff()
+            self.content_viewer.setPlaceholderText("왼쪽 목록에서 파일을 선택하면 내용이 여기에 표시됩니다.")
 
     def on_version_double_clicked(self, version_number): self.rollback_to_version()
     def show_about(self): QMessageBox.about(self, "정보", "심플 파일 버전 관리 v1.0\n\n간단하고 직관적인 파일 버전 관리 도구입니다.")
+
+    # --- NEW: 컨텍스트 메뉴 액션 핸들러 ---
+    def open_in_explorer(self, relative_path: str):
+        """선택된 파일 또는 폴더의 위치를 탐색기에서 엽니다."""
+        if not self.current_project: return
+        try:
+            full_path = self.current_project.get_working_file_path(relative_path)
+            
+            if not os.path.exists(full_path):
+                QMessageBox.warning(self, "경고", "존재하지 않는 파일 또는 폴더입니다.")
+                return
+
+            directory = os.path.dirname(full_path) if os.path.isfile(full_path) else full_path
+            
+            if sys.platform == "win32":
+                os.startfile(os.path.realpath(directory))
+            elif sys.platform == "darwin":  # macOS
+                subprocess.run(["open", directory])
+            else:  # Linux
+                subprocess.run(["xdg-open", directory])
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"탐색기 열기 실패:\n{str(e)}")
+
+    def open_file(self, relative_path: str):
+        """선택된 파일을 기본 연결 프로그램으로 엽니다."""
+        if not self.current_project: return
+        try:
+            full_path = self.current_project.get_working_file_path(relative_path)
+            if not os.path.isfile(full_path):
+                QMessageBox.warning(self, "경고", "존재하지 않는 파일입니다.")
+                return
+            
+            if sys.platform == "win32":
+                os.startfile(full_path)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", full_path])
+            else:
+                subprocess.run(["xdg-open", full_path])
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"파일 열기 실패:\n{str(e)}")
+
 
 def main():
     app = QApplication(sys.argv)
